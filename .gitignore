@@ -1,2 +1,5 @@
 prototype/database/students.json
 tempCodeRunnerFile.py
+.env
+__pycache__/
+*.pyc
