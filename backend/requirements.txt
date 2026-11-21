@@ -3,3 +3,12 @@ uvicorn[standard]
 pyodbc
 python-dotenv
 pydantic
+
+
+insightface 
+onnxruntime 
+opencv-python-headless 
+numpy
+
+
+python-multipart

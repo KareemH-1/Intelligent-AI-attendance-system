@@ -4,6 +4,8 @@ import { NavLink, Outlet } from "react-router";
 import {
     CalendarDays,
     Menu,
+    BookOpen,
+    Users,
     X,
     PanelLeftClose,
     PanelLeftOpen
@@ -64,7 +66,38 @@ export default function AdminLayout() {
                             Semesters
                         </span>
                     </NavLink>
-
+                    <NavLink
+                        to="/admin/courses"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Courses"
+                    >
+                        <BookOpen
+                            className="nav-item__icon"
+                            size={18}
+                        />
+                        <span className="nav-item__label">
+                            Courses
+                        </span>
+                    </NavLink>
+                    <NavLink
+                        to="/admin/students"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Students"
+                    >
+                        <Users
+                            className="nav-item__icon"
+                            size={18}
+                        />
+                        <span className="nav-item__label">
+                            Students
+                        </span>
+                    </NavLink>
                 </nav>
 
 

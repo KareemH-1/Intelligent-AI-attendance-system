@@ -4,6 +4,10 @@ from database import get_connection
 from fastapi.middleware.cors import CORSMiddleware
 
 from semesters.router import router as semester_router
+from courses.router import router as course_router
+from students.router import router as student_router
+
+from vision_layer.registration_router import router as registration_router
 
 app = FastAPI(
     title="backend for the ai attendance system",
@@ -20,6 +24,10 @@ app.add_middleware(
 
 
 app.include_router(semester_router)
+app.include_router(course_router)
+app.include_router(student_router, prefix="/api")
+app.include_router(registration_router, prefix="/api")
+
 
 @app.get("/")
 def home():

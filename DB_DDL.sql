@@ -80,6 +80,41 @@ CREATE TABLE FaceEmbeddings
         CHECK (embedding_dimension > 0)
 );
 
+USE IntelligentAttendanceDB;
+GO
+
+ALTER TABLE FaceEmbeddings
+ADD
+    pose_label VARCHAR(10) NULL,
+    registration_id UNIQUEIDENTIFIER NULL;
+GO
+
+ALTER TABLE FaceEmbeddings
+ADD CONSTRAINT CK_FaceEmbeddings_Pose
+CHECK (
+    pose_label IS NULL
+    OR pose_label IN (
+        'FRONT',
+        'LEFT',
+        'RIGHT',
+        'UP',
+        'DOWN'
+    )
+);
+GO
+
+CREATE UNIQUE INDEX UX_FaceEmbeddings_ActivePersonPose
+ON FaceEmbeddings(person_id, pose_label)
+WHERE is_active = 1
+  AND pose_label IS NOT NULL;
+GO
+
+CREATE UNIQUE INDEX UX_FaceEmbeddings_RegistrationPose
+ON FaceEmbeddings(registration_id, pose_label)
+WHERE registration_id IS NOT NULL
+  AND pose_label IS NOT NULL;
+GO
+
 CREATE INDEX IX_FaceEmbeddings_Person
 ON FaceEmbeddings(person_id, is_active);
 
