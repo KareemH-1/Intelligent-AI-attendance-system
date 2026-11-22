@@ -7,6 +7,7 @@ class SemesterCreate(BaseModel):
     semester_name: str = Field(min_length=1, max_length=50)
     start_date: date
     end_date: date
+    copy_course_offerings: bool = True
 
     @model_validator(mode="after")
     def validate_dates(self):
@@ -35,6 +36,8 @@ class SemesterResponse(BaseModel):
     start_date: date
     end_date: date
     is_active: bool
+    copy_course_offerings: bool | None = None
+    copied_offerings_count: int | None = None
 
 
 

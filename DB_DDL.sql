@@ -431,3 +431,27 @@ ON StudentAttendance(student_id, check_in_time);
 
 CREATE INDEX IX_StudentAttendance_Session
 ON StudentAttendance(session_id);
+
+
+CREATE TABLE InstructorOfferings
+(
+    instructor_offering_id INT IDENTITY(1,1) PRIMARY KEY,
+    instructor_id INT NOT NULL,
+    offering_id INT NOT NULL,
+
+    instructor_role VARCHAR(20) NOT NULL,
+
+    CONSTRAINT FK_InstructorOfferings_Instructors
+        FOREIGN KEY (instructor_id)
+        REFERENCES Instructors(instructor_id),
+
+    CONSTRAINT FK_InstructorOfferings_Offerings
+        FOREIGN KEY (offering_id)
+        REFERENCES CourseOfferings(offering_id),
+
+    CONSTRAINT CK_InstructorOfferings_Role
+        CHECK (instructor_role IN ('Lecturer', 'TA')),
+
+    CONSTRAINT UQ_InstructorOfferings
+        UNIQUE (instructor_id, offering_id)
+);

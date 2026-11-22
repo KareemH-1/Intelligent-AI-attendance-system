@@ -24,6 +24,9 @@ export default function CoursesPage() {
   const [editingCourse, setEditingCourse] = useState(null);
 
   const [deleteCourse, setDeleteCourse] = useState(null);
+  const [offerCourse, setOfferCourse] = useState(null);
+  const [semesters, setSemesters] = useState([]);
+  const [offeringSemesterId, setOfferingSemesterId] = useState("");
 
   const emptyForm = {
     course_code: "",
@@ -45,6 +48,18 @@ export default function CoursesPage() {
       clearTimeout(timeoutId);
     };
   }, [search]);
+
+  useEffect(() => {
+    api.get("/semesters")
+      .then((response) => {
+        setSemesters(response.data);
+        const active = response.data.find((semester) => semester.is_active);
+        if (active) setOfferingSemesterId(String(active.semester_id));
+      })
+      .catch(() => {
+        setPageError("Failed to load semesters.");
+      });
+  }, []);
 
   const loadCourses = async (searchValue = "") => {
     try {
@@ -183,6 +198,45 @@ export default function CoursesPage() {
     }
   }
 
+  function openOfferingModal(course) {
+    setOfferCourse(course);
+    setFormError("");
+  }
+
+  async function handleCreateOffering(event) {
+    event.preventEvent?.();
+    event.preventDefault();
+
+    if (!offeringSemesterId) {
+      setFormError("Please select a semester.");
+      return;
+    }
+
+    setSaving(true);
+    setFormError("");
+    setPageError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await api.post("/courses/offerings", {
+        course_id: offerCourse.course_id,
+        semester_id: Number(offeringSemesterId),
+      });
+
+      setSuccessMessage(response.data.message);
+      setOfferCourse(null);
+      await loadCourses(search);
+    } catch (error) {
+      setFormError(
+        typeof error.response?.data?.detail === "string"
+          ? error.response.data.detail
+          : "Unable to create the course offering.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <main className="page">
       <div className="page-header">
@@ -229,7 +283,8 @@ export default function CoursesPage() {
             <Search size={18} className="search__icon" />
 
             <input
-              type="search"
+              type="text"
+              role="searchbox"
               className="input"
               placeholder="Search by course code or name…"
               value={search}
@@ -304,6 +359,16 @@ export default function CoursesPage() {
 
                       <td>
                         <div className="cell-actions">
+                          <button
+                            type="button"
+                            className="btn btn--ghost btn--icon btn--sm"
+                            onClick={() => openOfferingModal(course)}
+                            aria-label={`Offer ${course.course_code}`}
+                            title="Offer in semester"
+                          >
+                            <BookOpen size={16} />
+                          </button>
+
                           <button
                             type="button"
                             className="btn btn--ghost btn--icon btn--sm"
@@ -464,6 +529,94 @@ export default function CoursesPage() {
                     : editingCourse
                       ? "Save Changes"
                       : "Add Course"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {offerCourse && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setOfferCourse(null);
+            }
+          }}
+        >
+          <div
+            className="modal modal--sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="course-offering-title"
+          >
+            <form onSubmit={handleCreateOffering}>
+              <div className="modal__header">
+                <div>
+                  <h2 className="modal__title" id="course-offering-title">
+                    Offer Course
+                  </h2>
+                  <p className="text-sm text-muted">
+                    {offerCourse.course_code} — {offerCourse.course_name}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--icon"
+                  onClick={() => setOfferCourse(null)}
+                  disabled={saving}
+                  aria-label="Close dialog"
+                >
+                  <X size={19} />
+                </button>
+              </div>
+
+              <div className="modal__body">
+                {formError && (
+                  <div className="alert alert--error">
+                    <div className="alert__body">{formError}</div>
+                  </div>
+                )}
+
+                <div className="stack">
+                  <div className="form-group">
+                    <label className="label label--required" htmlFor="offering_semester">
+                      Semester
+                    </label>
+                    <select
+                      id="offering_semester"
+                      className="select"
+                      value={offeringSemesterId}
+                      onChange={(event) => setOfferingSemesterId(event.target.value)}
+                      required
+                    >
+                      <option value="">Select semester</option>
+                      {semesters.map((semester) => (
+                        <option key={semester.semester_id} value={semester.semester_id}>
+                          {semester.semester_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal__footer">
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => setOfferCourse(null)}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn--primary"
+                  disabled={saving}
+                >
+                  {saving ? "Adding..." : "Add Offering"}
                 </button>
               </div>
             </form>

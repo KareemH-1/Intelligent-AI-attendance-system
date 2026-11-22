@@ -107,9 +107,47 @@ def create_semester(semester: SemesterCreate):
         )
 
         row = cursor.fetchone()
+
+        copied_count = 0
+        if semester.copy_course_offerings:
+            cursor.execute("""
+                SELECT TOP 1 semester_id
+                FROM Semesters
+                WHERE semester_id <> ?
+                ORDER BY start_date DESC, semester_id DESC
+            """, row[0])
+            previous = cursor.fetchone()
+
+            if previous is not None:
+                cursor.execute("""
+                    INSERT INTO CourseOfferings
+                        (course_id, semester_id, section_code)
+                    SELECT DISTINCT
+                        source.course_id,
+                        ?,
+                        'A'
+                    FROM CourseOfferings source
+                    WHERE source.semester_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM CourseOfferings existing
+                          WHERE existing.course_id = source.course_id
+                            AND existing.semester_id = ?
+                      )
+                """,
+                    row[0],
+                    previous[0],
+                    row[0],
+                )
+                cursor.execute("SELECT @@ROWCOUNT")
+                copied_count = cursor.fetchone()[0]
+
         connection.commit()
 
-        return semester_from_row(row)
+        response = semester_from_row(row)
+        response["copy_course_offerings"] = semester.copy_course_offerings
+        response["copied_offerings_count"] = copied_count
+        return response
 
     except pyodbc.IntegrityError:
         connection.rollback()

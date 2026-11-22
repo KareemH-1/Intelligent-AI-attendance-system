@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Search, Pencil, Trash2, Users, X, Camera } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Users, X, Camera, Eye, BookOpen } from "lucide-react";
 
 import api from "../../services/api";
 import FaceRegistrationStep from "../../components/FaceRegistrationStep";
@@ -32,6 +32,16 @@ export default function StudentsPage() {
 
   const [universityIdLoading, setUniversityIdLoading] = useState(false);
   const [universityIdError, setUniversityIdError] = useState("");
+  const [viewStudent, setViewStudent] = useState(null);
+  const [enrollmentStudent, setEnrollmentStudent] = useState(null);
+  const [enrollmentSemesters, setEnrollmentSemesters] = useState([]);
+  const [enrollmentSemesterId, setEnrollmentSemesterId] = useState("");
+  const [studentOfferings, setStudentOfferings] = useState([]);
+  const [enrollmentLoading, setEnrollmentLoading] = useState(false);
+  const [enrollmentSearch, setEnrollmentSearch] = useState("");
+  const [enrollmentOffset, setEnrollmentOffset] = useState(0);
+  const [enrollmentTotal, setEnrollmentTotal] = useState(0);
+  const enrollmentLimit = 20;
 
   const numberFormatter = new Intl.NumberFormat();
 
@@ -62,7 +72,7 @@ export default function StudentsPage() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [enrollmentSearch, enrollmentOffset]);
 
   // Debounced search
   useEffect(() => {
@@ -120,6 +130,20 @@ export default function StudentsPage() {
       controller.abort();
     };
   }, [modalOpen, editingStudent]);
+  useEffect(() => {
+    api.get("/semesters")
+      .then((response) => {
+        setEnrollmentSemesters(response.data);
+        const active = response.data.find((semester) => semester.is_active);
+        if (active) setEnrollmentSemesterId(String(active.semester_id));
+      })
+      .catch((error) => {
+        setPageError(
+          error.response?.data?.detail ||
+          "Failed to load semesters.",
+        );
+      });
+  }, []);
   const openCreateModal = () => {
     setEditingStudent(null);
     setCreatedStudent(null);
@@ -271,6 +295,109 @@ export default function StudentsPage() {
       setDeletingId(null);
     }
   };
+
+  const loadStudentOfferings = useCallback(async (studentId, semesterId) => {
+    if (!semesterId) return;
+
+    setEnrollmentLoading(true);
+    setPageError("");
+
+    try {
+      const response = await api.get(
+        `/students/${studentId}/offerings`,
+        {
+          params: {
+            semester_id: semesterId,
+            search: enrollmentSearch,
+            limit: enrollmentLimit,
+            offset: enrollmentOffset,
+          },
+        },
+      );
+      setStudentOfferings(response.data.items);
+      setEnrollmentTotal(response.data.total);
+    } catch (error) {
+      setPageError(
+        error.response?.data?.detail ||
+        "Failed to load student course registrations.",
+      );
+    } finally {
+      setEnrollmentLoading(false);
+    }
+  }, [enrollmentSearch, enrollmentOffset]);
+
+  const openEnrollmentModal = (student) => {
+    setEnrollmentStudent(student);
+    setStudentOfferings([]);
+    setEnrollmentSearch("");
+    setEnrollmentOffset(0);
+  };
+
+  useEffect(() => {
+    if (enrollmentStudent && enrollmentSemesterId) {
+      const timeoutId = setTimeout(() => {
+        loadStudentOfferings(
+          enrollmentStudent.student_id,
+          enrollmentSemesterId,
+        );
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [
+    enrollmentStudent,
+    enrollmentSemesterId,
+    enrollmentSearch,
+    enrollmentOffset,
+    loadStudentOfferings,
+  ]);
+
+  const registerStudentForOffering = async (offering) => {
+    setEnrollmentLoading(true);
+    setPageError("");
+
+    try {
+      await api.post(
+        `/students/${enrollmentStudent.student_id}/offerings`,
+        { offering_id: offering.offering_id },
+      );
+      setSuccessMessage("Student registered for the course successfully.");
+      await loadStudentOfferings(
+        enrollmentStudent.student_id,
+        enrollmentSemesterId,
+      );
+    } catch (error) {
+      setPageError(
+        error.response?.data?.detail ||
+        "Unable to register the student for this course.",
+      );
+    } finally {
+      setEnrollmentLoading(false);
+    }
+  };
+
+  const unregisterStudentFromOffering = async (offering) => {
+    setEnrollmentLoading(true);
+    setPageError("");
+
+    try {
+      await api.delete(
+        `/students/${enrollmentStudent.student_id}/offerings/${offering.offering_id}`,
+      );
+      setSuccessMessage("Student removed from the course successfully.");
+      await loadStudentOfferings(
+        enrollmentStudent.student_id,
+        enrollmentSemesterId,
+      );
+    } catch (error) {
+      setPageError(
+        error.response?.data?.detail ||
+        "Unable to remove the student from this course.",
+      );
+    } finally {
+      setEnrollmentLoading(false);
+    }
+  };
   const handleFaceRegistrationComplete = async () => {
     setSuccessMessage(
       editingStudent
@@ -350,7 +477,8 @@ export default function StudentsPage() {
 
               <input
                 id="student-search"
-                type="search"
+                type="text"
+                role="searchbox"
                 className="input"
                 placeholder="Search by name, university ID, email or faculty..."
                 value={search}
@@ -419,6 +547,7 @@ export default function StudentsPage() {
                               Add Student
                             </button>
                           )}
+
                         </div>
                       </td>
                     </tr>
@@ -455,6 +584,44 @@ export default function StudentsPage() {
 
                         <td className="students-table__actions">
                           <div className="cell-actions">
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--icon"
+                              aria-label={`View ${student.full_name}`}
+                              title="View student"
+                              onClick={() => setViewStudent(student)}
+                            >
+                              <Eye size={16} />
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--icon"
+                              aria-label={`Manage courses for ${student.full_name}`}
+                              title="Manage course registrations"
+                              onClick={() => openEnrollmentModal(student)}
+                            >
+                              <BookOpen size={16} />
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--icon"
+                              aria-label={`Register face for ${student.full_name}`}
+                              title="Face registration"
+                              onClick={() => {
+                                setEditingStudent(student);
+                                setCreatedStudent({
+                                  person_id: student.person_id,
+                                  full_name: student.full_name,
+                                });
+                                setRegistrationStep(2);
+                                setModalOpen(true);
+                              }}
+                            >
+                              <Camera size={16} />
+                            </button>
+
                             <button
                               type="button"
                               className="btn btn--ghost btn--icon"
@@ -708,10 +875,151 @@ export default function StudentsPage() {
                 <FaceRegistrationStep
                   personId={createdStudent.person_id}
                   studentName={createdStudent.full_name}
+                  subjectLabel="Student ID"
+                  subjectType="students"
                   onComplete={handleFaceRegistrationComplete}
                   onSkip={handleSkipFaceRegistration}
                 />
               )}
+            </div>
+          </div>
+        )}
+
+        {viewStudent && (
+          <div className="modal-backdrop">
+            <div className="modal modal--sm" role="dialog" aria-modal="true">
+              <div className="modal__header">
+                <h2 className="modal__title">Student Details</h2>
+                <button type="button" className="btn btn--ghost btn--icon" onClick={() => setViewStudent(null)} aria-label="Close">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="modal__body">
+                <p><strong>{viewStudent.full_name}</strong></p>
+                <p>University ID: {viewStudent.university_id}</p>
+                <p>Email: {viewStudent.email || "Not provided"}</p>
+                <p>Faculty: {viewStudent.department}</p>
+                <p>Academic year: {viewStudent.academic_year}</p>
+              </div>
+              <div className="modal__footer">
+                <button type="button" className="btn btn--secondary" onClick={() => setViewStudent(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {enrollmentStudent && (
+          <div className="modal-backdrop">
+            <div className="modal modal--lg" role="dialog" aria-modal="true">
+              <div className="modal__header">
+                <div>
+                  <h2 className="modal__title">Course Registrations</h2>
+                  <p className="text-sm text-muted">{enrollmentStudent.full_name}</p>
+                </div>
+                <button type="button" className="btn btn--ghost btn--icon" onClick={() => setEnrollmentStudent(null)} aria-label="Close">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="modal__body">
+                <div className="form-group" style={{ marginBottom: "1rem" }}>
+                  <label className="label" htmlFor="student_enrollment_semester">Semester</label>
+                  <select
+                    id="student_enrollment_semester"
+                    className="select"
+                    value={enrollmentSemesterId}
+                    onChange={(event) => {
+                      setEnrollmentSemesterId(event.target.value);
+                      setEnrollmentOffset(0);
+                      setEnrollmentSearch("");
+                    }}
+                  >
+                    <option value="">Select semester</option>
+                    {enrollmentSemesters.map((semester) => (
+                      <option key={semester.semester_id} value={semester.semester_id}>
+                        {semester.semester_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="toolbar">
+                  <div className="search">
+                    <Search size={18} className="search__icon" />
+                    <input
+                      className="input"
+                      type="text"
+                      role="searchbox"
+                      placeholder="Search courses..."
+                      value={enrollmentSearch}
+                      onChange={(event) => {
+                        setEnrollmentSearch(event.target.value);
+                        setEnrollmentOffset(0);
+                      }}
+                    />
+                  </div>
+                  <span className="text-sm text-muted">
+                    {enrollmentTotal} course
+                    {enrollmentTotal === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                {enrollmentLoading ? (
+                  <div className="loading-state"><div className="spinner" /></div>
+                ) : (
+                  <>
+                    <div className="table-wrap" style={{ maxHeight: "22rem", overflowY: "auto" }}>
+                      <table className="table">
+                        <thead><tr><th>Course</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>
+                          {studentOfferings.map((offering) => (
+                            <tr key={offering.offering_id}>
+                              <td><strong>{offering.course_code}</strong>{" — "}{offering.course_name}</td>
+                              <td>{offering.is_enrolled ? "Registered" : "Not registered"}</td>
+                              <td>
+                                {offering.is_enrolled ? (
+                                  <button type="button" className="btn btn--danger-ghost btn--sm" onClick={() => unregisterStudentFromOffering(offering)}>Remove</button>
+                                ) : (
+                                  <button type="button" className="btn btn--primary btn--sm" onClick={() => registerStudentForOffering(offering)}>Register</button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          {studentOfferings.length === 0 && (
+                            <tr><td colSpan="3"><div className="empty-state">No matching course offerings found.</div></td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="action-group action-group--end" style={{ marginTop: "1rem" }}>
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        disabled={enrollmentOffset === 0}
+                        onClick={() =>
+                          setEnrollmentOffset((previous) =>
+                            Math.max(0, previous - enrollmentLimit)
+                          )
+                        }
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--secondary"
+                        disabled={enrollmentOffset + enrollmentLimit >= enrollmentTotal}
+                        onClick={() =>
+                          setEnrollmentOffset((previous) =>
+                            previous + enrollmentLimit
+                          )
+                        }
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}

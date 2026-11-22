@@ -7,7 +7,10 @@ import {
     X,
     RefreshCw,
     CalendarDays,
-    AlertCircle
+    AlertCircle,
+    Search,
+    BookOpen,
+    Trash2
 } from "lucide-react";
 import api from "../../services/api";
 
@@ -51,8 +54,17 @@ export default function SemestersPage() {
     const [formData, setFormData] = useState({
         semester_name: "",
         start_date: "",
-        end_date: ""
+        end_date: "",
+        copy_course_offerings: true
     });
+
+    const [offeringSemester, setOfferingSemester] = useState(null);
+    const [offeringSearch, setOfferingSearch] = useState("");
+    const [courseSearch, setCourseSearch] = useState("");
+    const [courseResults, setCourseResults] = useState([]);
+    const [courseOffset, setCourseOffset] = useState(0);
+    const [courseHasMore, setCourseHasMore] = useState(false);
+    const [offerings, setOfferings] = useState([]);
 
     const [formError, setFormError] = useState("");
 
@@ -76,13 +88,36 @@ export default function SemestersPage() {
         loadSemesters();
     }, []);
 
+    useEffect(() => {
+        if (!offeringSemester) return;
+
+        const timeoutId = setTimeout(() => {
+            loadSemesterOfferings(offeringSemester, offeringSearch).catch((error) => {
+                setFormError(getErrorMessage(error));
+            });
+        }, 300);
+
+        return () => clearTimeout(timeoutId);
+    }, [offeringSearch, offeringSemester]);
+
+    useEffect(() => {
+        if (!offeringSemester) return;
+
+        const timeoutId = setTimeout(() => {
+            searchAvailableCourses();
+        }, 300);
+
+        return () => clearTimeout(timeoutId);
+    }, [courseSearch, offeringSemester]);
+
     function openCreateModal() {
         setEditingSemester(null);
 
         setFormData({
             semester_name: "",
             start_date: "",
-            end_date: ""
+            end_date: "",
+            copy_course_offerings: true
         });
 
         setFormError("");
@@ -95,7 +130,8 @@ export default function SemestersPage() {
         setFormData({
             semester_name: semester.semester_name,
             start_date: semester.start_date.slice(0, 10),
-            end_date: semester.end_date.slice(0, 10)
+            end_date: semester.end_date.slice(0, 10),
+            copy_course_offerings: false
         });
 
         setFormError("");
@@ -111,11 +147,11 @@ export default function SemestersPage() {
     }
 
     function handleInputChange(event) {
-        const { name, value } = event.target;
+        const { name, value, type, checked } = event.target;
 
         setFormData(previous => ({
             ...previous,
-            [name]: value
+            [name]: type === "checkbox" ? checked : value
         }));
     }
 
@@ -149,7 +185,10 @@ export default function SemestersPage() {
         const payload = {
             semester_name: name,
             start_date: formData.start_date,
-            end_date: formData.end_date
+            end_date: formData.end_date,
+            copy_course_offerings: editingSemester
+                ? false
+                : formData.copy_course_offerings
         };
 
         setSaving(true);
@@ -163,9 +202,16 @@ export default function SemestersPage() {
 
                 setSuccessMessage("Semester updated successfully.");
             } else {
-                await api.post("/semesters", payload);
+                const response = await api.post("/semesters", payload);
+                const copiedCount = response.data.copied_offerings_count;
 
-                setSuccessMessage("Semester created successfully.");
+                setSuccessMessage(
+                    payload.copy_course_offerings &&
+                    typeof copiedCount === "number" &&
+                    copiedCount > 0
+                        ? `Semester created successfully. ${copiedCount} course offering${copiedCount === 1 ? "" : "s"} copied from the previous semester.`
+                        : "Semester created successfully."
+                );
             }
 
             setModalOpen(false);
@@ -256,6 +302,97 @@ export default function SemestersPage() {
     function closeConfirmation() {
         if (saving) return;
         setPendingAction(null);
+    }
+
+    async function loadSemesterOfferings(semester, searchValue = "") {
+        const response = await api.get("/courses/offerings", {
+            params: {
+                semester_id: semester.semester_id,
+                search: searchValue
+            }
+        });
+        setOfferings(response.data);
+    }
+
+    async function openOfferingsModal(semester) {
+        setOfferingSemester(semester);
+        setOfferingSearch("");
+        setCourseSearch("");
+        setCourseOffset(0);
+        setPageError("");
+        setFormError("");
+
+        try {
+            await loadSemesterOfferings(semester);
+            const coursesResponse = await api.get("/courses/search-options", {
+                params: {
+                    search: "",
+                    limit: 20,
+                    offset: 0,
+                    semester_id: semester.semester_id
+                }
+            });
+            setCourseResults(coursesResponse.data.items);
+            setCourseHasMore(coursesResponse.data.has_more);
+        } catch (error) {
+            setFormError(getErrorMessage(error));
+        }
+    }
+
+    async function searchAvailableCourses(reset = true) {
+        try {
+            const nextOffset = reset ? 0 : courseOffset + 20;
+            const response = await api.get("/courses/search-options", {
+                params: {
+                    search: courseSearch,
+                    limit: 20,
+                    offset: nextOffset,
+                    semester_id: offeringSemester?.semester_id
+                }
+            });
+            setCourseResults(reset
+                ? response.data.items
+                : (previous) => [...previous, ...response.data.items]);
+            setCourseOffset(nextOffset);
+            setCourseHasMore(response.data.has_more);
+        } catch (error) {
+            setFormError(getErrorMessage(error));
+        }
+    }
+
+    async function addCourseOffering(course) {
+        setSaving(true);
+        setFormError("");
+
+        try {
+            await api.post("/courses/offerings", {
+                course_id: course.course_id,
+                semester_id: offeringSemester.semester_id,
+            });
+            await loadSemesterOfferings(offeringSemester, offeringSearch);
+            await searchAvailableCourses();
+            setSuccessMessage("Course offering added successfully.");
+        } catch (error) {
+            setFormError(getErrorMessage(error));
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function removeCourseOffering(offering) {
+        setSaving(true);
+        setFormError("");
+
+        try {
+            await api.delete(`/courses/offerings/${offering.offering_id}`);
+            await loadSemesterOfferings(offeringSemester, offeringSearch);
+            await searchAvailableCourses();
+            setSuccessMessage("Course offering removed successfully.");
+        } catch (error) {
+            setFormError(getErrorMessage(error));
+        } finally {
+            setSaving(false);
+        }
     }
 
     return (
@@ -427,6 +564,16 @@ export default function SemestersPage() {
                                                 <button
                                                     type="button"
                                                     className="btn btn--ghost btn--icon btn--sm"
+                                                    onClick={() => openOfferingsModal(semester)}
+                                                    title="Manage course offerings"
+                                                    aria-label={`Manage course offerings for ${semester.semester_name}`}
+                                                >
+                                                    <BookOpen size={16} />
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    className="btn btn--ghost btn--icon btn--sm"
                                                     onClick={() => openEditModal(semester)}
                                                     title="Edit semester"
                                                     aria-label={`Edit ${semester.semester_name}`}
@@ -574,6 +721,21 @@ export default function SemestersPage() {
                                     />
                                 </div>
 
+                                {!editingSemester && (
+                                    <label className="check" htmlFor="copy_course_offerings">
+                                        <input
+                                            id="copy_course_offerings"
+                                            name="copy_course_offerings"
+                                            type="checkbox"
+                                            checked={formData.copy_course_offerings}
+                                            onChange={handleInputChange}
+                                        />
+                                        <span>
+                                            Copy course offerings from the most recent semester
+                                        </span>
+                                    </label>
+                                )}
+
                             </div>
 
                             <div className="modal__footer">
@@ -599,6 +761,166 @@ export default function SemestersPage() {
                                 </button>
                             </div>
                         </form>
+                    </section>
+                </div>
+            )}
+
+            {offeringSemester && (
+                <div className="modal-backdrop">
+                    <section
+                        className="modal modal--lg"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="offerings-modal-title"
+                    >
+                        <div className="modal__header">
+                            <div>
+                                <h2 id="offerings-modal-title" className="modal__title">
+                                    Course Offerings
+                                </h2>
+                                <p className="form-hint">
+                                    {offeringSemester.semester_name}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                className="btn btn--ghost btn--icon"
+                                onClick={() => setOfferingSemester(null)}
+                                disabled={saving}
+                                aria-label="Close course offerings"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="modal__body">
+                            {formError && (
+                                <div className="alert alert--error">
+                                    <div className="alert__body">{formError}</div>
+                                </div>
+                            )}
+
+                            <div className="toolbar">
+                                <div className="search">
+                                    <Search size={18} className="search__icon" />
+                                    <input
+                                        className="input"
+                                        type="text"
+                                        role="searchbox"
+                                        placeholder="Search course offerings..."
+                                        value={offeringSearch}
+                                        onChange={(event) => setOfferingSearch(event.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="card card--flat" style={{ marginBottom: "1rem" }}>
+                                <div className="card__body">
+                                    <div className="toolbar">
+                                        <div className="search">
+                                            <Search size={18} className="search__icon" />
+                                            <input
+                                                className="input"
+                                                type="text"
+                                                role="searchbox"
+                                                placeholder="Search courses to add..."
+                                                value={courseSearch}
+                                                onChange={(event) => setCourseSearch(event.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {courseResults.map((course) => (
+                                        <div
+                                            key={course.course_id}
+                                            className="cluster cluster--between"
+                                            style={{
+                                                padding: "0.75rem 0",
+                                                borderTop: "1px solid var(--border-subtle)"
+                                            }}
+                                        >
+                                            <span>
+                                                <strong>{course.course_code}</strong>
+                                                {" — "}
+                                                {course.course_name}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                className="btn btn--primary btn--sm"
+                                                onClick={() => addCourseOffering(course)}
+                                                disabled={saving}
+                                            >
+                                                <Plus size={15} />
+                                                Add
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {courseHasMore && (
+                                        <button
+                                            type="button"
+                                            className="btn btn--secondary btn--block"
+                                            onClick={() => searchAvailableCourses(false)}
+                                            disabled={saving}
+                                        >
+                                            Load more courses
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="table-wrap">
+                                <table className="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Course</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {offerings.map((offering) => (
+                                            <tr key={offering.offering_id}>
+                                                <td>
+                                                    <strong>{offering.course_code}</strong>
+                                                    {" — "}
+                                                    {offering.course_name}
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn--danger-ghost btn--icon btn--sm"
+                                                        onClick={() => removeCourseOffering(offering)}
+                                                        disabled={saving}
+                                                        title="Remove offering"
+                                                        aria-label={`Remove ${offering.course_code}`}
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {offerings.length === 0 && (
+                                            <tr>
+                                                <td colSpan="2">
+                                                    <div className="empty-state">
+                                                        No course offerings found for this semester.
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="modal__footer">
+                            <button
+                                type="button"
+                                className="btn btn--secondary"
+                                onClick={() => setOfferingSemester(null)}
+                            >
+                                Close
+                            </button>
+                        </div>
                     </section>
                 </div>
             )}

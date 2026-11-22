@@ -3,7 +3,11 @@ from fastapi import APIRouter, HTTPException, Query
 import pyodbc
 
 from database import get_connection
-from students.schemas import StudentCreate, StudentUpdate
+from students.schemas import (
+    StudentCreate,
+    StudentUpdate,
+    StudentEnrollmentCreate,
+)
 
 
 router = APIRouter(
@@ -270,6 +274,185 @@ def update_student(student_id: int, student: StudentUpdate):
             status_code=400,
             detail="Unable to update student information."
         )
+
+    finally:
+        connection.close()
+
+
+@router.get("/{student_id}/offerings")
+def get_student_offerings(
+    student_id: int,
+    semester_id: int = Query(gt=0),
+    search: str = Query(default="", max_length=150),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        search = search.strip()
+
+        cursor.execute("""
+            SELECT
+                co.offering_id,
+                c.course_code,
+                c.course_name,
+                co.section_code,
+                CASE WHEN e.enrollment_id IS NULL
+                     THEN CONVERT(BIT, 0)
+                     ELSE CONVERT(BIT, 1)
+                END AS is_enrolled
+            FROM CourseOfferings co
+            INNER JOIN Courses c ON c.course_id = co.course_id
+            LEFT JOIN Enrollments e
+                ON e.offering_id = co.offering_id
+               AND e.student_id = ?
+            WHERE co.semester_id = ?
+              AND (
+                    ? = ''
+                    OR c.course_code LIKE ?
+                    OR c.course_name LIKE ?
+                    OR co.section_code LIKE ?
+                  )
+            ORDER BY c.course_code, co.section_code
+            OFFSET ? ROWS
+            FETCH NEXT ? ROWS ONLY
+        """,
+            student_id,
+            semester_id,
+            search,
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+            offset,
+            limit,
+        )
+
+        items = [
+            {
+                "offering_id": row[0],
+                "course_code": row[1],
+                "course_name": row[2],
+                "section_code": row[3],
+                "is_enrolled": bool(row[4]),
+            }
+            for row in cursor.fetchall()
+        ]
+
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM CourseOfferings co
+            INNER JOIN Courses c ON c.course_id = co.course_id
+            WHERE co.semester_id = ?
+              AND (
+                    ? = ''
+                    OR c.course_code LIKE ?
+                    OR c.course_name LIKE ?
+                    OR co.section_code LIKE ?
+                  )
+        """,
+            semester_id,
+            search,
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+        )
+        total = cursor.fetchone()[0]
+
+        return {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(items) < total,
+        }
+
+    finally:
+        connection.close()
+
+
+@router.post("/{student_id}/offerings", status_code=201)
+def register_student_for_offering(
+    student_id: int,
+    enrollment: StudentEnrollmentCreate,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            SELECT 1
+            FROM Students
+            WHERE student_id = ?
+        """, student_id)
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Student not found.")
+
+        cursor.execute("""
+            SELECT 1
+            FROM CourseOfferings
+            WHERE offering_id = ?
+        """, enrollment.offering_id)
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Course offering not found.")
+
+        cursor.execute("""
+            INSERT INTO Enrollments (student_id, offering_id)
+            OUTPUT INSERTED.enrollment_id
+            VALUES (?, ?)
+        """, student_id, enrollment.offering_id)
+        enrollment_id = cursor.fetchone()[0]
+        connection.commit()
+
+        return {
+            "message": "Student registered for the course successfully.",
+            "enrollment_id": enrollment_id,
+        }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except pyodbc.IntegrityError:
+        connection.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This student is already registered for the course offering.",
+        )
+
+    finally:
+        connection.close()
+
+
+@router.delete("/{student_id}/offerings/{offering_id}")
+def unregister_student_from_offering(
+    student_id: int,
+    offering_id: int,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            DELETE FROM Enrollments
+            WHERE student_id = ? AND offering_id = ?
+        """, student_id, offering_id)
+
+        if cursor.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Student course registration not found.",
+            )
+
+        connection.commit()
+        return {"message": "Student removed from the course successfully."}
+
+    except HTTPException:
+        connection.rollback()
+        raise
 
     finally:
         connection.close()

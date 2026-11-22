@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera,
@@ -8,6 +9,8 @@ import {
   RotateCcw,
   ShieldCheck,
   VideoOff,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 
 import api from "../services/api";
@@ -24,6 +27,8 @@ const POSES = [
 export default function FaceRegistrationStep({
   personId,
   studentName,
+  subjectLabel,
+  subjectType,
   onComplete,
   onSkip,
 }) {
@@ -40,6 +45,7 @@ export default function FaceRegistrationStep({
   const [cameraReady, setCameraReady] = useState(false);
   const [currentPose, setCurrentPose] = useState("FRONT");
   const [instruction, setInstruction] = useState("");
+
   const [progress, setProgress] = useState({
     captured_poses: [],
     missing_poses: POSES.map((pose) => pose.id),
@@ -47,16 +53,21 @@ export default function FaceRegistrationStep({
     required_count: 5,
     is_complete: false,
   });
+
   const [capturedPhotos, setCapturedPhotos] = useState([]);
   const [message, setMessage] = useState(
     "Position your face inside the guide.",
   );
   const [error, setError] = useState("");
+
   const [initializing, setInitializing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [retaking, setRetaking] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  const [verifyingIdentity, setVerifyingIdentity] = useState(false);
+
   const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [identityVerification, setIdentityVerification] = useState(null);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -70,6 +81,61 @@ export default function FaceRegistrationStep({
 
     setCameraReady(false);
   }, []);
+
+  const verifyIdentity = useCallback(async (activeSessionId) => {
+    if (!activeSessionId || !personId) {
+      return;
+    }
+
+    try {
+      setVerifyingIdentity(true);
+      setIdentityVerification(null);
+      setError("");
+      setMessage("Checking this face against registered identities...");
+
+      const response = await api.post(
+        `/registration/sessions/${activeSessionId}/verify`,
+        {
+          person_id: personId,
+        },
+      );
+
+      if (!activeRef.current) {
+        return;
+      }
+
+      setIdentityVerification(response.data);
+
+      if (response.data.status === "clear") {
+        setMessage("Identity verified. The registration is ready to save.");
+      } else {
+        setMessage(
+          response.data.message ||
+            "The captured face could not be verified.",
+        );
+      }
+    } catch (err) {
+      if (!activeRef.current) {
+        return;
+      }
+
+      const detail =
+        err.response?.data?.detail ||
+        "Identity verification failed. Please try again.";
+
+      setIdentityVerification({
+        status: "error",
+        message: detail,
+      });
+
+      setMessage("Identity verification could not be completed.");
+      setError(detail);
+    } finally {
+      if (activeRef.current) {
+        setVerifyingIdentity(false);
+      }
+    }
+  }, [personId]);
 
   useEffect(() => {
     activeRef.current = true;
@@ -145,7 +211,6 @@ export default function FaceRegistrationStep({
           try {
             await api.delete(`/registration/sessions/${createdSessionId}`);
           } catch {
-            // The session will expire automatically if deletion fails.
           }
 
           sessionIdRef.current = null;
@@ -204,7 +269,6 @@ export default function FaceRegistrationStep({
           canvas.width = 640;
           canvas.height = 480;
 
-          // Draw the original video frame without mirroring.
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
           const blob = await new Promise((resolve) => {
@@ -246,7 +310,6 @@ export default function FaceRegistrationStep({
           if (data.registration_progress?.is_complete || data.verification) {
             let photos = data.captured_photos;
 
-            // Recover the photos if the capture response did not include them.
             if (!photos || photos.length !== 5) {
               try {
                 const sessionResponse = await api.get(
@@ -259,14 +322,24 @@ export default function FaceRegistrationStep({
               }
             }
 
+            if (cancelled) {
+              break;
+            }
+
             completeRef.current = true;
             setCapturedPhotos(photos || []);
             setRegistrationComplete(true);
+            setCurrentPose(null);
+            setInstruction("");
 
-            setMessage(
-              data.verification?.message ||
-                "All five face poses have been captured.",
-            );
+            if (photos?.length === 5) {
+              await verifyIdentity(sessionId);
+            } else {
+              setMessage("The captured photos could not be loaded.");
+              setError(
+                "Please restart the registration session and capture the poses again.",
+              );
+            }
 
             break;
           }
@@ -288,7 +361,6 @@ export default function FaceRegistrationStep({
           }
         }
 
-        // Wait for the next frame only after the previous request finishes.
         await delay(250);
       }
     };
@@ -298,16 +370,17 @@ export default function FaceRegistrationStep({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, cameraReady, captureVersion]);
+  }, [sessionId, cameraReady, captureVersion, verifyIdentity]);
 
   const handleRetake = async (pose) => {
-    if (!sessionId || retaking || saving) {
+    if (!sessionId || retaking || saving || verifyingIdentity) {
       return;
     }
 
     try {
       setRetaking(true);
       setError("");
+      setIdentityVerification(null);
       setMessage(`Preparing to recapture ${pose.toLowerCase()} pose...`);
 
       const response = await api.post(
@@ -329,27 +402,77 @@ export default function FaceRegistrationStep({
     }
   };
 
+  const handleRetryVerification = async () => {
+    if (!sessionId || verifyingIdentity || saving || retaking) {
+      return;
+    }
+
+    await verifyIdentity(sessionId);
+  };
+
   const handleSave = async () => {
-    if (!sessionId || !registrationComplete || saving) {
+    if (
+      !sessionId ||
+      !registrationComplete ||
+      identityVerification?.status !== "clear" ||
+      saving ||
+      verifyingIdentity ||
+      savedRef.current
+    ) {
       return;
     }
 
     try {
       setSaving(true);
       setError("");
+      savedRef.current = true;
 
       await api.post(`/registration/sessions/${sessionId}/save`, {
         person_id: personId,
       });
 
-      savedRef.current = true;
       sessionIdRef.current = null;
 
       stopCamera();
       onComplete();
     } catch (err) {
+      savedRef.current = false;
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+
+      if (
+        status === 404 &&
+        typeof detail === "string" &&
+        detail.toLowerCase().includes("session")
+      ) {
+        try {
+          const sessionResponse = await api.post("/registration/sessions");
+          const nextSessionId = sessionResponse.data.session_id;
+
+          sessionIdRef.current = nextSessionId;
+          completeRef.current = false;
+          setSessionId(nextSessionId);
+          setCaptureVersion((previous) => previous + 1);
+          setRegistrationComplete(false);
+          setCapturedPhotos([]);
+          setIdentityVerification(null);
+          setCurrentPose(sessionResponse.data.current_pose);
+          setInstruction(sessionResponse.data.instruction);
+          setProgress(sessionResponse.data.progress);
+          setMessage(
+            "The previous registration session expired. Capture the five poses again.",
+          );
+          setError("");
+        } catch {
+          setError(
+            "The registration session could not be restarted. Please reopen face registration.",
+          );
+        }
+        return;
+      }
+
       setError(
-        err.response?.data?.detail ||
+        (typeof detail === "string" && detail) ||
           "Failed to save face registration. Please try again.",
       );
     } finally {
@@ -386,6 +509,12 @@ export default function FaceRegistrationStep({
 
   const capturedCount = progress?.captured_count || 0;
   const percentage = (capturedCount / 5) * 100;
+  const identityIsClear = identityVerification?.status === "clear";
+  const identityHasConflict =
+    identityVerification?.status === "duplicate_identity";
+  const identityHasMismatch =
+    identityVerification?.status === "identity_mismatch";
+  const identityHasError = identityVerification?.status === "error";
 
   return (
     <div className="face-registration">
@@ -395,10 +524,10 @@ export default function FaceRegistrationStep({
             <Camera size={19} />
           </div>
 
-          <div>
+          <div className="face-registration__student-details">
             <span className="face-registration__eyebrow">FACE ENROLLMENT</span>
             <h3>{studentName}</h3>
-            <p>Student ID: {personId}</p>
+            {subjectLabel && <p>{subjectLabel}: {personId}</p>}
           </div>
         </div>
 
@@ -408,7 +537,13 @@ export default function FaceRegistrationStep({
         </div>
       </div>
 
-      <div className="face-registration__progress">
+      <div
+        className="face-registration__progress"
+        role="progressbar"
+        aria-valuenow={capturedCount}
+        aria-valuemin={0}
+        aria-valuemax={5}
+      >
         <div
           className="face-registration__progress-fill"
           style={{ width: `${percentage}%` }}
@@ -451,14 +586,23 @@ export default function FaceRegistrationStep({
                 Camera active
               </div>
             )}
+
+            {registrationComplete && (
+              <div className="face-registration__camera-complete">
+                <CheckCircle2 size={16} />
+                Capture complete
+              </div>
+            )}
           </div>
 
           <canvas ref={canvasRef} className="face-registration__canvas" />
 
           <div className="face-registration__feedback">
             <div className="face-registration__feedback-icon">
-              {registrationComplete ? (
+              {identityIsClear ? (
                 <CheckCircle2 size={19} />
+              ) : verifyingIdentity ? (
+                <LoaderCircle size={19} className="spin" />
               ) : (
                 <Camera size={19} />
               )}
@@ -469,7 +613,8 @@ export default function FaceRegistrationStep({
 
           {error && (
             <div className="face-registration__error" role="alert">
-              {error}
+              <AlertTriangle size={17} />
+              <p>{error}</p>
             </div>
           )}
         </div>
@@ -477,24 +622,32 @@ export default function FaceRegistrationStep({
         <aside className="face-registration__side">
           <div className="face-registration__instruction">
             <span className="face-registration__eyebrow">
-              CURRENT INSTRUCTION
+              {registrationComplete ? "REGISTRATION STATUS" : "CURRENT INSTRUCTION"}
             </span>
 
             <h3>
               {registrationComplete
-                ? "Capture complete"
+                ? verifyingIdentity
+                  ? "Verifying identity"
+                  : identityIsClear
+                    ? "Identity verified"
+                    : "Capture complete"
                 : POSES.find((pose) => pose.id === currentPose)?.label}
             </h3>
 
             <p>
               {registrationComplete
-                ? "All five poses have been captured. You can now save the registration."
+                ? verifyingIdentity
+                  ? "Comparing the captured face with existing registrations."
+                  : identityIsClear
+                    ? "The captured face matches the expected registration identity."
+                    : "Review the captured samples and verification result below."
                 : instruction || "Keep your face centered inside the guide."}
             </p>
           </div>
 
           <div className="face-registration__pose-list">
-            {POSES.map((pose, index) => {
+            {POSES.map((pose) => {
               const captured = progress.captured_poses?.includes(pose.id);
               const active = currentPose === pose.id && !registrationComplete;
 
@@ -519,7 +672,12 @@ export default function FaceRegistrationStep({
                       type="button"
                       className="face-registration__retake"
                       onClick={() => handleRetake(pose.id)}
-                      disabled={!registrationComplete || saving || retaking}
+                      disabled={
+                        !registrationComplete ||
+                        saving ||
+                        retaking ||
+                        verifyingIdentity
+                      }
                     >
                       <RotateCcw size={14} />
                       Retake
@@ -539,6 +697,7 @@ export default function FaceRegistrationStep({
           </div>
         </aside>
       </div>
+
       {registrationComplete && (
         <section className="face-registration__gallery">
           <div className="face-registration__gallery-header">
@@ -546,8 +705,8 @@ export default function FaceRegistrationStep({
               <span className="face-registration__eyebrow">CAPTURE REVIEW</span>
               <h3>Registered face samples</h3>
               <p>
-                Review the five captured positions before saving the
-                registration.
+                Review the five captured positions and identity verification
+                before saving.
               </p>
             </div>
 
@@ -604,7 +763,11 @@ export default function FaceRegistrationStep({
                         type="button"
                         className="face-registration__photo-retake"
                         onClick={() => handleRetake(photo.pose_name)}
-                        disabled={saving || retaking}
+                        disabled={
+                          saving ||
+                          retaking ||
+                          verifyingIdentity
+                        }
                       >
                         <RotateCcw size={14} />
                         Retake
@@ -616,14 +779,107 @@ export default function FaceRegistrationStep({
             </div>
           ) : (
             <div className="face-registration__gallery-error">
+              <AlertTriangle size={18} />
               <p>
-                The five captured photos could not be loaded. Please refresh the
-                registration session or restart capture.
+                The five captured photos could not be loaded. Please restart
+                the registration session.
               </p>
             </div>
           )}
+
+          <div
+            className={`face-registration__verification ${
+              identityIsClear
+                ? "is-success"
+                : identityHasConflict || identityHasMismatch
+                  ? "is-danger"
+                  : identityHasError
+                    ? "is-warning"
+                    : "is-pending"
+            }`}
+          >
+            <div className="face-registration__verification-icon">
+              {identityIsClear ? (
+                <CheckCircle2 size={20} />
+              ) : verifyingIdentity ? (
+                <LoaderCircle size={20} className="spin" />
+              ) : (
+                <ShieldCheck size={20} />
+              )}
+            </div>
+
+            <div className="face-registration__verification-content">
+              <strong>
+                {verifyingIdentity
+                  ? "Verifying identity..."
+                  : identityIsClear
+                    ? "Identity verified"
+                    : identityHasConflict
+                      ? "Possible duplicate identity"
+                      : identityHasMismatch
+                        ? "Identity mismatch"
+                        : identityHasError
+                          ? "Verification unavailable"
+                          : "Identity verification pending"}
+              </strong>
+
+              <p>
+                {identityVerification?.message ||
+                  (verifyingIdentity
+                    ? `Checking the captured face against registered ${subjectType || "people"}.`
+                    : "Identity verification is required before this registration can be saved.")}
+              </p>
+
+              {identityHasConflict &&
+                identityVerification.conflicting_person && (
+                  <div className="face-registration__conflict">
+                    <span>
+                      University ID:{" "}
+                      <strong>
+                        {identityVerification.conflicting_person.university_id ||
+                          "Not available"}
+                      </strong>
+                    </span>
+
+                    <span>
+                      Registered name:{" "}
+                      <strong>
+                        {identityVerification.conflicting_person.full_name ||
+                          "Not available"}
+                      </strong>
+                    </span>
+                  </div>
+                )}
+
+              {identityIsClear &&
+                identityVerification.expected_person_similarity !== null &&
+                identityVerification.expected_person_similarity !== undefined && (
+                  <span className="face-registration__verification-detail">
+                    Existing identity similarity:{" "}
+                    {(identityVerification.expected_person_similarity * 100).toFixed(1)}%
+                  </span>
+                )}
+            </div>
+
+            {(identityHasError || !identityVerification) && (
+              <button
+                type="button"
+                className="face-registration__verify-retry"
+                onClick={handleRetryVerification}
+                disabled={verifyingIdentity || saving || retaking}
+              >
+                {verifyingIdentity ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <RefreshCw size={15} />
+                )}
+                Retry
+              </button>
+            )}
+          </div>
         </section>
       )}
+
       <div className="face-registration__footer">
         <button
           type="button"
@@ -641,11 +897,19 @@ export default function FaceRegistrationStep({
           disabled={
             !registrationComplete ||
             capturedPhotos.length !== 5 ||
+            !identityIsClear ||
             saving ||
-            retaking
+            retaking ||
+            verifyingIdentity
           }
         >
-          {saving ? "Saving face data..." : "Save Face Registration"}
+          {saving
+            ? "Saving face data..."
+            : verifyingIdentity
+              ? "Verifying identity..."
+              : identityIsClear
+                ? "Save Face Registration"
+                : "Verification required"}
         </button>
       </div>
     </div>

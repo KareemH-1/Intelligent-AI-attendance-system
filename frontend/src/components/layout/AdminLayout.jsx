@@ -6,6 +6,9 @@ import {
     Menu,
     BookOpen,
     Users,
+    GraduationCap,
+    Building2,
+    CalendarRange,
     X,
     PanelLeftClose,
     PanelLeftOpen
@@ -97,6 +100,44 @@ export default function AdminLayout() {
                         <span className="nav-item__label">
                             Students
                         </span>
+                    </NavLink>
+                    <NavLink
+                        to="/admin/instructors"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Instructors"
+                    >
+                        <GraduationCap
+                            className="nav-item__icon"
+                            size={18}
+                        />
+                        <span className="nav-item__label">
+                            Instructors
+                        </span>
+                    </NavLink>
+                    <NavLink
+                        to="/admin/halls"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Lecture Halls"
+                    >
+                        <Building2 className="nav-item__icon" size={18} />
+                        <span className="nav-item__label">Lecture Halls</span>
+                    </NavLink>
+                    <NavLink
+                        to="/admin/timetable"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Hall Schedule"
+                    >
+                        <CalendarRange className="nav-item__icon" size={18} />
+                        <span className="nav-item__label">Hall Schedule</span>
                     </NavLink>
                 </nav>
 

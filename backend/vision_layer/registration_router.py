@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from vision_layer.registration_session import registration_session_manager
 from vision_layer.registration_service import registration_service
 from vision_layer.registration_verifier import registration_verifier
+from vision_layer.identity_verifier import identity_verifier
 
 import base64
 from uuid import uuid4
@@ -252,6 +253,66 @@ async def capture_registration_frame(
         return response
 
 
+@router.post("/sessions/{session_id}/verify")
+def verify_registration_identity(
+    session_id: str,
+    request: RegistrationSaveRequest
+):
+    session = registration_session_manager.get_session(session_id)
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Registration session not found or expired."
+        )
+
+    with session.lock:
+        collector = session.collector
+
+        if not collector.is_complete():
+            raise HTTPException(
+                status_code=409,
+                detail="All five face poses must be captured first."
+            )
+
+        samples = collector.get_samples()
+
+        structural_verification = registration_verifier.verify_samples(
+            samples
+        )
+
+        if not structural_verification.is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=structural_verification.message
+            )
+
+        identity_result = identity_verifier.verify_identity(
+            request.person_id,
+            samples
+        )
+
+        if identity_result.status == "error":
+            raise HTTPException(
+                status_code=503,
+                detail=identity_result.message
+            )
+
+        return {
+            "status": identity_result.status,
+            "message": identity_result.message,
+            "expected_person_similarity": (
+                identity_result.expected_person_similarity
+            ),
+            "expected_person_matching_poses": (
+                identity_result.expected_person_matching_poses
+            ),
+            "conflicting_person": identity_result.conflicting_person,
+            "checked_people": identity_result.checked_people,
+            "threshold": identity_result.threshold,
+            "is_valid": identity_result.is_valid
+        }
+        
 @router.post("/sessions/{session_id}/retake/{pose_name}")
 def retake_registration_pose(
     session_id: str,
@@ -323,7 +384,23 @@ def save_registration(
                 status_code=400,
                 detail=verification.message
             )
+        identity_result = identity_verifier.verify_identity(
+            request.person_id,
+            sample_data
+        )
 
+        if identity_result.status == "error":
+            raise HTTPException(
+                status_code=503,
+                detail=identity_result.message
+        )
+
+        if not identity_result.is_valid:
+            raise HTTPException(
+                status_code=409,
+                detail=identity_result.message
+            )
+            
         registration_id = str(uuid4())
 
         connection = None
