@@ -89,6 +89,191 @@ def get_weekly_timetable(
         connection.close()
 
 
+@router.get("/sessions/history")
+def get_session_history(
+    semester_id: int = Query(gt=0),
+    hall_id: int | None = Query(default=None, gt=0),
+    search: str = Query(default="", max_length=150),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        search = search.strip()
+
+        cursor.execute("""
+            SELECT
+                ls.session_id,
+                ls.session_date,
+                ls.scheduled_start,
+                ls.scheduled_end,
+                ls.actual_start,
+                ls.actual_end,
+                ls.session_status,
+                lh.hall_id,
+                lh.hall_name,
+                lh.building,
+                c.course_code,
+                c.course_name,
+                co.section_code,
+                lecturer_person.full_name,
+                ta_person.full_name,
+                COUNT(sa.attendance_id),
+                SUM(CASE WHEN sa.attendance_status = 'Present' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN sa.attendance_status = 'Late' THEN 1 ELSE 0 END)
+            FROM LectureSessions ls
+            INNER JOIN TimetableSlots ts ON ts.slot_id = ls.slot_id
+            INNER JOIN CourseOfferings co ON co.offering_id = ts.offering_id
+            INNER JOIN Courses c ON c.course_id = co.course_id
+            INNER JOIN LectureHalls lh ON lh.hall_id = ts.hall_id
+            INNER JOIN Instructors lecturer ON lecturer.instructor_id = ls.primary_instructor_id
+            INNER JOIN People lecturer_person ON lecturer_person.person_id = lecturer.person_id
+            LEFT JOIN Instructors ta ON ta.instructor_id = ls.ta_instructor_id
+            LEFT JOIN People ta_person ON ta_person.person_id = ta.person_id
+            LEFT JOIN StudentAttendance sa ON sa.session_id = ls.session_id
+            WHERE co.semester_id = ?
+              AND ls.session_date <= CAST(GETDATE() AS DATE)
+              AND (? IS NULL OR lh.hall_id = ?)
+              AND (
+                    ? = ''
+                    OR c.course_code LIKE ?
+                    OR c.course_name LIKE ?
+                    OR lh.hall_name LIKE ?
+                    OR lecturer_person.full_name LIKE ?
+                  )
+            GROUP BY
+                ls.session_id,
+                ls.session_date,
+                ls.scheduled_start,
+                ls.scheduled_end,
+                ls.actual_start,
+                ls.actual_end,
+                ls.session_status,
+                lh.hall_id,
+                lh.hall_name,
+                lh.building,
+                c.course_code,
+                c.course_name,
+                co.section_code,
+                lecturer_person.full_name,
+                ta_person.full_name
+            ORDER BY ls.session_date DESC, ls.scheduled_start DESC
+            OFFSET ? ROWS
+            FETCH NEXT ? ROWS ONLY
+        """,
+            semester_id,
+            hall_id,
+            hall_id,
+            search,
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+            offset,
+            limit,
+        )
+
+        items = []
+        for row in cursor.fetchall():
+            items.append({
+                "session_id": row[0],
+                "session_date": str(row[1]),
+                "scheduled_start": format_time(row[2]),
+                "scheduled_end": format_time(row[3]),
+                "actual_start": row[4].isoformat() if row[4] else None,
+                "actual_end": row[5].isoformat() if row[5] else None,
+                "session_status": row[6],
+                "hall_id": row[7],
+                "hall_name": row[8],
+                "building": row[9],
+                "course_code": row[10],
+                "course_name": row[11],
+                "section_code": row[12],
+                "lecturer_name": row[13],
+                "ta_name": row[14],
+                "lecturer_attended": row[4] is not None,
+                "student_attendance_count": row[15] or 0,
+                "present_count": row[16] or 0,
+                "late_count": row[17] or 0,
+            })
+
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM (
+                SELECT ls.session_id
+                FROM LectureSessions ls
+                INNER JOIN TimetableSlots ts ON ts.slot_id = ls.slot_id
+                INNER JOIN CourseOfferings co ON co.offering_id = ts.offering_id
+                INNER JOIN Courses c ON c.course_id = co.course_id
+                INNER JOIN LectureHalls lh ON lh.hall_id = ts.hall_id
+                INNER JOIN Instructors lecturer ON lecturer.instructor_id = ls.primary_instructor_id
+                INNER JOIN People lecturer_person ON lecturer_person.person_id = lecturer.person_id
+                WHERE co.semester_id = ?
+                  AND ls.session_date <= CAST(GETDATE() AS DATE)
+                  AND (? IS NULL OR lh.hall_id = ?)
+                  AND (
+                        ? = ''
+                        OR c.course_code LIKE ?
+                        OR c.course_name LIKE ?
+                        OR lh.hall_name LIKE ?
+                        OR lecturer_person.full_name LIKE ?
+                      )
+            ) history
+        """,
+            semester_id,
+            hall_id,
+            hall_id,
+            search,
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+            f"%{search}%",
+        )
+        total = cursor.fetchone()[0]
+
+        return {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+    finally:
+        connection.close()
+
+
+@router.get("/sessions/{session_id}/students")
+def get_session_student_attendance(session_id: int):
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            SELECT
+                sa.attendance_id,
+                p.university_id,
+                p.full_name,
+                sa.attendance_status,
+                sa.check_in_time,
+                sa.verification_method
+            FROM StudentAttendance sa
+            INNER JOIN Students s ON s.student_id = sa.student_id
+            INNER JOIN People p ON p.person_id = s.person_id
+            WHERE sa.session_id = ?
+            ORDER BY sa.check_in_time
+        """, session_id)
+
+        return [{
+            "attendance_id": row[0],
+            "university_id": row[1],
+            "full_name": row[2],
+            "attendance_status": row[3],
+            "check_in_time": row[4].isoformat(),
+            "verification_method": row[5],
+        } for row in cursor.fetchall()]
+    finally:
+        connection.close()
+
+
 @router.get("/offerings")
 def get_available_offerings(
     semester_id: int = Query(gt=0),

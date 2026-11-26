@@ -255,6 +255,8 @@ CREATE TABLE UserAccounts
     username VARCHAR(100) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     is_active BIT NOT NULL DEFAULT 1,
+    must_change_password BIT NOT NULL
+        CONSTRAINT DF_UserAccounts_must_change_password DEFAULT 0,
     created_at DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
 
     CONSTRAINT FK_UserAccounts_People

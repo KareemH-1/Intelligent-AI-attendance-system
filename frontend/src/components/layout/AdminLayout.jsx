@@ -9,12 +9,16 @@ import {
     GraduationCap,
     Building2,
     CalendarRange,
+    History,
     X,
     PanelLeftClose,
-    PanelLeftOpen
+    PanelLeftOpen,
+    LogOut
 } from "lucide-react";
+import useAuth from "../../auth/useAuth";
 
 export default function AdminLayout() {
+    const { user, logout } = useAuth();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -139,9 +143,32 @@ export default function AdminLayout() {
                         <CalendarRange className="nav-item__icon" size={18} />
                         <span className="nav-item__label">Hall Schedule</span>
                     </NavLink>
+                    <NavLink
+                        to="/admin/sessions"
+                        className={({ isActive }) =>
+                            isActive ? "nav-item is-active" : "nav-item"
+                        }
+                        onClick={closeSidebar}
+                        title="Session History"
+                    >
+                        <History className="nav-item__icon" size={18} />
+                        <span className="nav-item__label">Session History</span>
+                    </NavLink>
                 </nav>
 
-
+                <div className="sidebar__footer">
+                    <div className="sidebar__account">{user?.full_name}</div>
+                    <button
+                        type="button"
+                        className="nav-item sidebar__logout"
+                        onClick={logout}
+                        title="Sign out"
+                        aria-label="Sign out"
+                    >
+                        <LogOut className="nav-item__icon" size={18} />
+                        <span className="nav-item__label">Sign out</span>
+                    </button>
+                </div>
 
             </aside>
 

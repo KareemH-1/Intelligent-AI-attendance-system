@@ -8,7 +8,6 @@ class InstructorCreate(BaseModel):
     department: str = Field(min_length=1, max_length=100)
     instructor_type: str = Field(pattern="^(Lecturer|TA)$")
     username: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=6, max_length=255)
 
 
 class InstructorUpdate(BaseModel):
@@ -18,7 +17,7 @@ class InstructorUpdate(BaseModel):
     department: str = Field(min_length=1, max_length=100)
     instructor_type: str = Field(pattern="^(Lecturer|TA)$")
     username: str | None = Field(default=None, max_length=100)
-    password: str | None = Field(default=None, min_length=6, max_length=255)
+    password: str | None = Field(default=None, min_length=8, max_length=255)
 
 
 class InstructorAssignmentCreate(BaseModel):

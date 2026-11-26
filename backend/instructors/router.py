@@ -1,9 +1,7 @@
-import hashlib
-import secrets
-
 import pyodbc
 from fastapi import APIRouter, HTTPException, Query
 
+from auth.security import DEFAULT_INITIAL_PASSWORD, hash_password
 from database import get_connection
 from instructors.schemas import (
     InstructorCreate,
@@ -14,17 +12,6 @@ from instructors.schemas import (
 
 
 router = APIRouter(prefix="/instructors", tags=["Instructors"])
-
-
-def hash_password(password):
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt.encode("utf-8"),
-        100_000,
-    ).hex()
-    return f"pbkdf2_sha256${salt}${digest}"
 
 
 def is_unique_violation(error):
@@ -198,14 +185,15 @@ def create_instructor(instructor: InstructorCreate):
         cursor.execute(
             """
             INSERT INTO UserAccounts
-                (person_id, role_id, username, password_hash, is_active)
+                (person_id, role_id, username, password_hash, is_active,
+                 must_change_password)
             OUTPUT INSERTED.account_id
-            VALUES (?, ?, ?, ?, 1)
+            VALUES (?, ?, ?, ?, 1, 1)
             """,
             person_id,
             role[0],
             instructor.username.strip(),
-            hash_password(instructor.password),
+            hash_password(DEFAULT_INITIAL_PASSWORD),
         )
         account_id = cursor.fetchone()[0]
 
@@ -312,14 +300,9 @@ def update_instructor(instructor_id: int, instructor: InstructorUpdate):
             """, instructor.username.strip(), person_id)
 
         if instructor.password is not None:
-            if len(instructor.password) < 6:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Password must be at least 6 characters.",
-                )
             cursor.execute("""
                 UPDATE UserAccounts
-                SET password_hash = ?
+                SET password_hash = ?, must_change_password = 1
                 WHERE person_id = ?
             """, hash_password(instructor.password), person_id)
 

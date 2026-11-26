@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from database import get_connection
@@ -13,6 +13,8 @@ from halls.router import router as hall_router
 from timetable.router import router as timetable_router
 
 from vision_layer.registration_router import router as registration_router
+from auth.dependencies import require_admin
+from auth.router import router as auth_router
 
 app = FastAPI(
     title="backend for the ai attendance system",
@@ -43,11 +45,11 @@ async def friendly_validation_error(request: Request, error: RequestValidationEr
         label = field_names.get(field, field.replace("_", " ").title())
         error_type = item["type"]
 
-        if field == "password" and error_type in (
+        if field in ("password", "new_password") and error_type in (
             "string_too_short",
             "too_short",
         ):
-            friendly_messages.append("Password must contain at least 6 characters.")
+            friendly_messages.append("Password must contain at least 8 characters.")
         elif error_type in ("string_too_short", "too_short"):
             friendly_messages.append(f"{label} is required.")
         elif error_type in ("string_too_long", "too_long"):
@@ -73,13 +75,14 @@ app.add_middleware(
 )
 
 
-app.include_router(semester_router)
-app.include_router(course_router)
-app.include_router(student_router, prefix="/api")
-app.include_router(instructor_router, prefix="/api")
-app.include_router(hall_router, prefix="/api")
-app.include_router(timetable_router, prefix="/api")
-app.include_router(registration_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
+app.include_router(semester_router, dependencies=[Depends(require_admin)])
+app.include_router(course_router, dependencies=[Depends(require_admin)])
+app.include_router(student_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(instructor_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(hall_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(timetable_router, prefix="/api", dependencies=[Depends(require_admin)])
+app.include_router(registration_router, prefix="/api", dependencies=[Depends(require_admin)])
 
 
 @app.get("/")
@@ -89,7 +92,7 @@ def home():
     }
 
 
-@app.get("/health/database")
+@app.get("/health/database", dependencies=[Depends(require_admin)])
 def database_health():
     try:
         connection = get_connection()

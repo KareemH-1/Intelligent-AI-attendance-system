@@ -693,6 +693,18 @@ dialog.modal[open] { display: flex; }
   color: var(--text-muted);
 }
 
+.session-history-toolbar {
+  align-items: flex-end;
+}
+
+.session-history-toolbar .form-field {
+  width: min(16rem, 100%);
+}
+
+.session-history-toolbar .search {
+  flex: 1 1 20rem;
+}
+
 @media (max-width: 767px) {
   .timetable-toolbar {
     align-items: stretch;

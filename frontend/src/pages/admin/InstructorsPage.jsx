@@ -150,8 +150,8 @@ export default function InstructorsPage() {
     setSaving(true);
     setFormError("");
 
-    if (!editingInstructor && formData.password.length < 6) {
-      setFormError("Password must contain at least 6 characters.");
+    if (editingInstructor && formData.password && formData.password.length < 8) {
+      setFormError("Temporary password must contain at least 8 characters.");
       setSaving(false);
       return;
     }
@@ -173,9 +173,7 @@ export default function InstructorsPage() {
       instructor_type: formData.instructor_type,
       username: formData.username.trim(),
     };
-    if (editingInstructor) {
-      if (formData.password) payload.password = formData.password;
-    } else {
+    if (editingInstructor && formData.password) {
       payload.password = formData.password;
     }
 
@@ -370,8 +368,8 @@ export default function InstructorsPage() {
                     <label className="form-field"><span>Department</span><input className="input" value={formData.department} onChange={(e) => setFormData({...formData, department: e.target.value})} required /></label>
                     <label className="form-field"><span>Instructor type</span><select className="select" value={formData.instructor_type} onChange={(e) => setFormData({...formData, instructor_type: e.target.value})}><option value="Lecturer">Lecturer</option><option value="TA">Teaching Assistant</option></select></label>
                     <label className="form-field"><span>Username</span><input className="input" value={formData.username} onChange={(e) => setFormData({...formData, username: e.target.value})} required={!editingInstructor} /></label>
-                    {!editingInstructor && <label className="form-field"><span>Password</span><input className="input" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} required /></label>}
-                    {editingInstructor && <label className="form-field"><span>New password (optional)</span><input className="input" type="password" value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} /></label>}
+                    {!editingInstructor && <p className="form-hint">The account starts with the system temporary password and must change it at first login.</p>}
+                    {editingInstructor && <label className="form-field"><span>Temporary password (forces change at next login)</span><input className="input" type="password" minLength={8} value={formData.password} onChange={(e) => setFormData({...formData, password: e.target.value})} /></label>}
                   </div>
                 </div>
                 <div className="modal__footer"><button type="button" className="btn btn--secondary" onClick={closeModal}>Cancel</button><button type="submit" className="btn btn--primary" disabled={saving}>{saving ? "Saving..." : editingInstructor ? "Save & Continue" : "Create & Register Face"}</button></div>

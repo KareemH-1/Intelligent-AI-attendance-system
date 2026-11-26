@@ -3,6 +3,7 @@ uvicorn[standard]
 pyodbc
 python-dotenv
 pydantic
+python-jose[cryptography]>=3.3,<4
 
 
 insightface 
